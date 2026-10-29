@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101927">
+<title>서초 3D 건물 지도</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.132/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.132/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101927;color:#e9f1fa;font:14px system-ui,-apple-system,sans-serif}#map{position:fixed;inset:0}.panel{position:fixed;top:max(12px,env(safe-area-inset-top));left:12px;width:min(350px,calc(100% - 24px));max-height:80vh;overflow:auto;background:#111d2bf2;border:1px solid #506070;border-radius:14px;padding:16px;box-shadow:0 8px 30px #0008}h1{margin:0;font-size:20px}p{color:#b3c5d4;line-height:1.6;font-size:13px}label{display:block;margin:12px 0 6px}input,button{width:100%;border-radius:8px;padding:12px;border:1px solid #516479;background:#203044;color:#fff;font:inherit;font-size:16px;min-height:44px}button{cursor:pointer;background:#2868bd;margin-top:8px;font-weight:600}button:disabled{opacity:.5;cursor:wait}.secondary{background:#35485b}.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}#status,#buildingStatus{font-size:12px;line-height:1.5;margin:10px 0 0;padding:8px;background:#22374a;border-radius:8px}.collapsed #controls{display:none}a{color:#9dccff}#toggle{font-size:14px}.cesium-viewer-bottom{max-width:100%}@media(max-width:650px){.panel{top:auto;bottom:calc(36px + env(safe-area-inset-bottom));max-height:52vh;max-height:52dvh;padding:12px}h1{font-size:17px}}
+</style>
+</head>
+<body>
+<main id="map" aria-label="서초구 3D 지도"></main>
+<section class="panel" id="panel" aria-label="지도 설정">
+<h1>서초 3D 건물 지도</h1>
+<button class="secondary" id="toggle" aria-expanded="true" aria-controls="controls">설정 접기</button>
+<div id="controls">
+<p>서초구의 거리와 건물을 둘러보세요. 한 손가락으로 이동하고, 두 손가락으로 확대하거나 기울일 수 있습니다.</p>
+<div class="row"><button id="home" disabled>서초구로 이동</button><button class="secondary" id="top" disabled>위에서 보기</button></div>
+<label for="token">3D 건물용 Cesium ion 토큰</label>
+<input id="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="접근 토큰 입력">
+<button id="load" disabled>3D 건물 불러오기</button>
+<p>기본 지도는 토큰 없이 이용할 수 있습니다. <a href="https://ion.cesium.com/tokens" target="_blank" rel="noopener noreferrer">Cesium ion 토큰 관리</a><br>입력한 토큰은 건물 요청에만 사용하며 이 페이지가 기기에 저장하지 않습니다. 건물 데이터는 누락되거나 실제와 다를 수 있습니다. 지형 고도는 반영하지 않습니다.</p>
+</div>
+<div id="status" role="status">지도 준비 중…</div>
+<div id="buildingStatus" role="status">3D 건물: 토큰 입력 대기</div>
+</section>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let viewer,buildings,loading=false;
+function status(message){$('status').textContent=message;}
+function buildingStatus(message){$('buildingStatus').textContent=message;}
+function home(top=false){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(127.011,37.483,top?6500:4200),orientation:{heading:0,pitch:Cesium.Math.toRadians(top?-90:-55),roll:0},duration:1.2});}
+function init(){
+ if(!window.Cesium){status('지도 라이브러리 연결 실패. 인터넷 연결을 확인하고 새로고침하세요.');return;}
+ try{
+  const imagery=new Cesium.OpenStreetMapImageryProvider({url:'https://tile.openstreetmap.org/'});
+  viewer=new Cesium.Viewer('map',{baseLayerPicker:false,geocoder:false,homeButton:false,sceneModePicker:false,navigationHelpButton:false,animation:false,timeline:false,infoBox:false,selectionIndicator:false,fullscreenButton:false,baseLayer:new Cesium.ImageryLayer(imagery),terrainProvider:new Cesium.EllipsoidTerrainProvider(),requestRenderMode:true,maximumRenderTimeChange:Infinity});
+  viewer.resolutionScale=Math.min(1,1.5/(window.devicePixelRatio||1));
+  viewer.scene.globe.depthTestAgainstTerrain=true;
+  let tileError=false;
+  imagery.errorEvent.addEventListener(()=>{tileError=true;status('기본 지도 타일 연결 오류. 네트워크를 확인하세요.');});
+  viewer.scene.globe.tileLoadProgressEvent.addEventListener(count=>{if(count===0&&!tileError)status('현재 화면의 기본 지도 타일 로딩 완료');});
+  viewer.scene.renderError.addEventListener(()=>status('3D 화면 렌더링 오류. 다른 앱을 닫고 페이지를 새로고침하세요.'));
+  viewer.canvas.addEventListener('webglcontextlost',()=>status('그래픽 연결이 중단되었습니다. 페이지를 새로고침하세요.'));
+  ['home','top','load'].forEach(id=>$(id).disabled=false);
+  home();status('3D 지도 준비 완료 · 기본 지도 타일 로딩 중…');
+ }catch(e){status('3D 지도 초기화 실패. WebGL을 지원하는 Safari 또는 Chrome에서 다시 열어주세요.');}
+}
+async function loadBuildings(){
+ if(loading||!viewer)return;
+ const token=$('token').value.trim();
+ if(!token){buildingStatus('3D 건물: Cesium ion 토큰을 입력하세요.');return;}
+ loading=true;$('load').disabled=true;buildingStatus('3D 건물: 데이터 연결 중…');
+ try{
+  const resource=await Cesium.IonResource.fromAssetId(96188,{accessToken:token});
+  const next=await Cesium.Cesium3DTileset.fromUrl(resource,{maximumScreenSpaceError:24});
+  let tileFailed=false;
+  next.tileFailed.addEventListener(()=>{tileFailed=true;buildingStatus('3D 건물: 일부 타일 연결 실패. 토큰 권한 또는 네트워크를 확인하세요.');});
+  next.initialTilesLoaded.addEventListener(()=>{if(!tileFailed)buildingStatus('3D 건물: 현재 화면의 타일 로딩 완료. 데이터가 없는 곳은 건물이 표시되지 않습니다.');});
+  viewer.scene.primitives.add(next);
+  if(buildings)viewer.scene.primitives.remove(buildings);
+  buildings=next;viewer.scene.requestRender();$('token').value='';
+  buildingStatus('3D 건물: 데이터 연결 완료 · 화면 타일 로딩 중…');
+ }catch(e){buildingStatus('3D 건물 연결 실패. 토큰의 자산 읽기 권한, 허용 URL 및 네트워크를 확인하세요. 기존 지도는 유지됩니다.');}
+ finally{loading=false;$('load').disabled=false;}
+}
+$('home').onclick=()=>home();$('top').onclick=()=>home(true);$('load').onclick=loadBuildings;
+$('toggle').onclick=()=>{const collapsed=$('panel').classList.toggle('collapsed');$('toggle').textContent=collapsed?'설정 펼치기':'설정 접기';$('toggle').setAttribute('aria-expanded',String(!collapsed));};
+init();
+</script>
+</body>
+</html>
